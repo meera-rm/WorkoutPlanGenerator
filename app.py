@@ -1,16 +1,12 @@
-
 import json
+import re
 from datetime import datetime
+
 import streamlit as st
-import requests
-import re  
 
-
-
+from main import InvalidInputError, PlanGenerationError, generate_workout_plan
 
 st.title("AI Workout Plan Generator")
-
-API_URL = "http://127.0.0.1:8001/workout"
 
 # ---------- Inputs (each has a key, so the callback can read it) ----------
 st.selectbox(
@@ -41,21 +37,13 @@ st.text_area(
 
 
 # ---------- Helpers ----------
-def build_payload() -> dict:
-    """Read the current widget values from session state and build the API request body."""
-    text = st.session_state.limitations_text
-    limitations = [s.strip() for s in text.split(",") if s.strip()] if text else []
-    return {
-        "fitness_goal": st.session_state.fitness_goal,
-        "experience": st.session_state.experience,
-        "days_available": st.session_state.days_available,
-        "equipment_access": st.session_state.equipment_access,
-        "optional": limitations,
-    }
+def parse_limitations(text: str) -> list[str]:
+    """Split the comma-separated injuries box into a clean list."""
+    return [s.strip() for s in text.split(",") if s.strip()] if text else []
 
 
 def generate_plan(is_regenerate: bool = False) -> None:
-    """Button callback: call the API and save the plan (or an error message) in session state.
+    """Button callback: generate a plan and save it (or an error message) in session state.
 
     is_regenerate=True keeps the current plan as `previous_workout` so the page can show what changed.
     """
@@ -66,39 +54,37 @@ def generate_plan(is_regenerate: bool = False) -> None:
         return
 
     try:
-        response = requests.post(API_URL, json=build_payload(), timeout=60)
-        response.raise_for_status()
-        new_workout = response.json()
-
-        if is_regenerate and "workout" in st.session_state:
-            st.session_state.previous_workout = st.session_state.workout
-            st.session_state.plan_version = st.session_state.get("plan_version", 1) + 1
-            message = f"Plan regenerated! (version {st.session_state.plan_version})"
-        else:
-            st.session_state.pop("previous_workout", None)  # a fresh Generate starts over
-            st.session_state.plan_version = 1
-            message = "Plan generated!"
-
-        st.session_state.workout = new_workout
-        st.session_state.generated_at = datetime.now().strftime("%H:%M:%S")
-        st.session_state.message = ("success", message)
-    except requests.exceptions.Timeout:
-        st.session_state.message = ("error", "The plan is taking too long to generate. Please try again.")
-    except requests.exceptions.ConnectionError:
-        st.session_state.message = ("error", f"Could not connect to the API. Make sure it's running on {API_URL}")
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 422:
-            text = "Some inputs are invalid. Please check your selections (max 5 limitations)."
-        elif e.response.status_code == 404:
-            text = "The workout API wasn't found at this address. Is the right server running on port 8001?"
-        else:
-            try:
-                text = e.response.json().get("detail", "Something went wrong.")
-            except ValueError:
-                text = "Something went wrong. Please try again."
-        st.session_state.message = ("error", text)
-    except Exception:
+        plan = generate_workout_plan(
+            fitness_goal=st.session_state.fitness_goal,
+            experience=st.session_state.experience,
+            days_available=st.session_state.days_available,
+            equipment_access=st.session_state.equipment_access,
+            limitations=parse_limitations(st.session_state.limitations_text),
+        )
+    except InvalidInputError as e:
+        st.session_state.message = ("warning", str(e))
+        return
+    except PlanGenerationError as e:
+        st.session_state.message = ("error", str(e))
+        return
+    except Exception as e:  # last-resort safety net: never show a traceback to the user
+        print("Unexpected error:", repr(e))
         st.session_state.message = ("error", "Something unexpected went wrong. Please try again.")
+        return
+
+    if is_regenerate and "workout" in st.session_state:
+        st.session_state.previous_workout = st.session_state.workout
+        st.session_state.plan_version = st.session_state.get("plan_version", 1) + 1
+        message = f"Plan regenerated! (version {st.session_state.plan_version})"
+    else:
+        st.session_state.pop("previous_workout", None)  # a fresh Generate starts over
+        st.session_state.plan_version = 1
+        message = "Plan generated!"
+
+    # Store a plain dict so the display, comparison and download code can use it directly
+    st.session_state.workout = plan.model_dump()
+    st.session_state.generated_at = datetime.now().strftime("%H:%M:%S")
+    st.session_state.message = ("success", message)
 
 
 def plan_to_markdown(workout: dict) -> str:

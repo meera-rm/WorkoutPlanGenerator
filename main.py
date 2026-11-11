@@ -2,7 +2,6 @@ import json
 import os
 import re
 from dotenv import load_dotenv
-from fastapi import HTTPException
 from pydantic import ValidationError
 from groq import (Groq, GroqError,
     AuthenticationError, RateLimitError,
@@ -13,11 +12,18 @@ from schemas import WorkoutPlan, WorkoutPlanResponse, strict_json_schema
 
 load_dotenv()
 
-api_key = os.getenv("GROQ_API_KEY")
-if not api_key:
-    raise RuntimeError("Missing GROQ_API_KEY in environment")
 
-client = Groq()
+class PlanGenerationError(Exception):
+    """Something stopped us returning a plan. str(error) is a friendly message for the UI."""
+
+
+class InvalidInputError(PlanGenerationError):
+    """The user's inputs are invalid. str(error) is a friendly message for the UI."""
+
+
+api_key = os.getenv("GROQ_API_KEY")
+# Created only when a key exists, so a missing key shows a friendly message instead of crashing the page.
+client = Groq(api_key=api_key) if api_key else None
 model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 # "strict" = Groq Structured Outputs with strict: true (the model can only produce JSON matching
@@ -115,8 +121,10 @@ def find_equipment_violations(plan: WorkoutPlan, workout: WorkoutPlanResponse) -
 def create_workout_plan(plan: WorkoutPlan) -> WorkoutPlanResponse:
     """Build the prompt from a validated WorkoutPlan, call Groq, and return a validated plan.
 
-    Raises HTTPException with a user-friendly message on any API or output failure.
+    Raises PlanGenerationError with a user-friendly message on any API or output failure.
     """
+    if client is None:
+        raise PlanGenerationError("The app is missing its GROQ_API_KEY. Add it to the .env file and restart.")
     try:
         workout_days = min(plan.days_available, 6)
         rest_days = 7 - workout_days
@@ -144,22 +152,22 @@ def create_workout_plan(plan: WorkoutPlan) -> WorkoutPlanResponse:
         # reference -https://github.com/groq/groq-python
         except AuthenticationError as e:
             print("Groq auth failed:", e)
-            raise HTTPException(502, "The AI service rejected our API key. Please check GROQ_API_KEY.") from e
+            raise PlanGenerationError("The AI service rejected our API key. Please check GROQ_API_KEY.") from e
         except RateLimitError as e:
             print("Groq rate limit:", e)
-            raise HTTPException(429, "Too many requests right now. Please wait a minute and try again.") from e
+            raise PlanGenerationError("Too many requests right now. Please wait a minute and try again.") from e
         except APITimeoutError as e:
             print("Groq timeout:", e)
-            raise HTTPException(504, "The AI took too long to respond. Please try again.") from e
+            raise PlanGenerationError("The AI took too long to respond. Please try again.") from e
         except APIConnectionError as e:
             print("Groq unreachable:", e.__cause__)
-            raise HTTPException(503, "Couldn't reach the AI service. Check your internet connection.") from e
+            raise PlanGenerationError("Couldn't reach the AI service. Check your internet connection.") from e
         except BadRequestError as e:
             print("Groq bad request:", e)
-            raise HTTPException(502, "The AI returned an unusable response. Please try again.") from e
+            raise PlanGenerationError("The AI returned an unusable response. Please try again.") from e
         except GroqError as e:
             print("Groq error:", e)
-            raise HTTPException(502, "Something went wrong with the AI service. Please try again.") from e
+            raise PlanGenerationError("Something went wrong with the AI service. Please try again.") from e
 
         raw_answer = response.choices[0].message.content
 
@@ -190,9 +198,8 @@ def create_workout_plan(plan: WorkoutPlan) -> WorkoutPlanResponse:
 
     except (ValueError, ValidationError) as e:
         print("Bad LLM output:", e)
-        raise HTTPException(
-            status_code=502,
-            detail="The AI returned an incomplete plan. Please click Generate again.",
+        raise PlanGenerationError(
+            "The AI returned an incomplete plan. Please click Generate again."
         ) from e
 
 
@@ -205,8 +212,8 @@ def generate_workout_plan(
 ) -> WorkoutPlanResponse:
     """Entry point that takes the structured inputs as parameters.
 
-    Validates them (friendly 422 on bad input), then builds the prompt and calls Groq
-    via create_workout_plan().
+    Validates them (InvalidInputError with a friendly message on bad input), then builds the
+    prompt and calls Groq via create_workout_plan().
     """
     try:
         plan = WorkoutPlan(
@@ -218,9 +225,7 @@ def generate_workout_plan(
         )
     except ValidationError as e:
         print("Invalid input:", e)
-        raise HTTPException(
-            status_code=422,
-            detail="Some inputs are invalid. Please check your selections.",
-        ) from e
+        reason = e.errors()[0]["msg"].removeprefix("Value error, ")
+        raise InvalidInputError(f"Some inputs are invalid: {reason}") from e
 
     return create_workout_plan(plan)

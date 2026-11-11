@@ -1,4 +1,4 @@
-# AI Workout Plan Generator: Pydantic version
+# AI Workout Plan Generator
 
 A Streamlit app that turns structured inputs (fitness goal, experience, days per week, equipment, injuries) into a personalized weekly workout plan using an LLM on the [Groq API](https://console.groq.com/docs/api-reference).
 
@@ -9,16 +9,18 @@ This version uses **Pydantic** to validate both sides of the LLM call (the user'
 ## How it works
 
 ```
-┌───────────────┐   POST /workout    ┌───────────┐      ┌────────────────────────────┐      ┌──────────┐
-│ app.py        │ ─────────────────▶ │ api.py    │ ───▶ │ main.py                    │ ───▶ │ Groq API │
-│ Streamlit UI  │ ◀───────────────── │ FastAPI   │ ◀─── │ prompt + call + checks     │ ◀─── │ gpt-oss  │
-└───────────────┘   plan JSON        └───────────┘      └────────────────────────────┘      └──────────┘
-                                          │                          │
-                                          └──── schemas.py (Pydantic models) ────┘
+┌───────────────┐                 ┌────────────────────────────┐      ┌──────────┐
+│ app.py        │ ──────────────▶ │ main.py                    │ ───▶ │ Groq API │
+│ Streamlit UI  │ ◀────────────── │ prompt + call + checks     │ ◀─── │ gpt-oss  │
+└───────────────┘   plan          └────────────────────────────┘      └──────────┘
+                                               │
+                                  schemas.py (Pydantic models)
 ```
 
+Everything runs in one Streamlit process: the page calls `generate_workout_plan()` in `main.py` directly.
+
 1. **Inputs**: the user fills in the form in `app.py` and clicks **Generate Plan**.
-2. **Input validation**: FastAPI parses the request into the `WorkoutPlan` Pydantic model (1–7 days, allowed goals and equipment, max 5 limitations). Invalid input returns a 422, shown as a friendly message.
+2. **Input validation**: `generate_workout_plan()` builds the `WorkoutPlan` Pydantic model (1–7 days, allowed goals and equipment, max 5 limitations). Invalid input raises `InvalidInputError`, shown as a friendly message.
 3. **Prompt**: `main.py` writes the rules into the **system prompt** and the user's details as labeled lines in the **user prompt**.
 4. **LLM call**: Groq is called with a **strict JSON schema** generated from the `WorkoutPlanResponse` model.
 5. **Output validation**: the response is parsed and checked by Pydantic (7 days, each weekday once, day counts match, no exercises on rest days), then by an equipment check in code.
@@ -29,8 +31,7 @@ This version uses **Pydantic** to validate both sides of the LLM call (the user'
 | File | Purpose |
 |---|---|
 | `app.py` | Streamlit page: inputs, Generate/Regenerate buttons, day-by-day display, download |
-| `api.py` | FastAPI app exposing `POST /workout` |
-| `main.py` | `generate_workout_plan()` (typed parameters) → `create_workout_plan()`: builds the prompt, calls Groq, runs the checks, maps errors to friendly messages |
+| `main.py` | `generate_workout_plan()` (typed parameters) → `create_workout_plan()`: builds the prompt, calls Groq, runs the checks, raises `PlanGenerationError` / `InvalidInputError` with friendly messages |
 | `schemas.py` | Pydantic models: `WorkoutPlan` (input), `WorkoutPlanResponse` / `WorkoutDay` / `Exercise` (output), and `strict_json_schema()` for Groq strict mode |
 
 ## What Pydantic does here
@@ -60,15 +61,15 @@ The strict schema guarantees the **structure**; Pydantic and the code checks sti
 
 ## Setup
 
-Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/). The project's `pyproject.toml` and `uv.lock` are in the parent `workout_generator/` folder, and `uv` finds them automatically.
+Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/).
 
-1. Create a `.env` file in the **parent `workout_generator/` folder** (or in this folder):
+1. Create a `.env` file in the project folder:
    ```
    GROQ_API_KEY=your_groq_key_here
    GROQ_MODEL=openai/gpt-oss-120b
    ```
    Optional: `GROQ_RESPONSE_MODE=json_object` switches from strict structured outputs back to the older JSON mode.
-2. Install dependencies (from `workout_generator/`):
+2. Install dependencies:
    ```bash
    uv sync
    ```
@@ -77,19 +78,11 @@ Never commit `.env`: it contains your API key and is listed in `.gitignore`.
 
 ## Run
 
-Two terminals, both in this `pydnatic_version/` folder:
-
 ```bash
-# Terminal 1: the API
-uv run uvicorn api:app --reload --port 8001
-
-# Terminal 2: the UI
 uv run streamlit run app.py
 ```
 
-Open the Local URL Streamlit prints (usually http://localhost:8501). The API docs are at http://127.0.0.1:8001/docs.
-
-> Port 8001 is used because port 8000 is often taken by Docker or other dev servers. If you change it, update `API_URL` in `app.py`. `--reload` only watches `.py` files: restart uvicorn after editing `.env`.
+Open the Local URL Streamlit prints (usually http://localhost:8501). After editing `.env`, stop Streamlit (Ctrl+C) and start it again so the new settings load.
 
 ## Features
 
@@ -122,15 +115,15 @@ In strict mode the model can only generate JSON that matches the schema (no miss
 | Situation | What the user sees |
 |---|---|
 | No equipment selected | "Please select your equipment." |
-| Invalid input (e.g. 0 days, more than 5 limitations) | "Some inputs are invalid…" |
-| Invalid / missing API key | "The AI service rejected our API key…" / server refuses to start |
+| Invalid input (e.g. more than 5 limitations) | "Some inputs are invalid: …" with the reason |
+| Invalid API key | "The AI service rejected our API key…" |
+| Missing API key | "The app is missing its GROQ_API_KEY…" |
 | Rate limit (429) | "Too many requests right now…" |
 | Groq timeout / network down | "The AI took too long…" / "Couldn't reach the AI service…" |
 | Empty, malformed or rule-breaking LLM output | "The AI returned an incomplete plan. Please click Generate again." |
-| API server not running | "Could not connect to the API…" |
-| Request takes over 60 s | "The plan is taking too long to generate…" |
+| Anything unexpected | "Something unexpected went wrong. Please try again." |
 
-Technical details are printed in the uvicorn terminal for debugging; users only see friendly messages.
+Technical details are printed in the terminal running Streamlit for debugging; users only see friendly messages.
 
 
 ## Known limitations
