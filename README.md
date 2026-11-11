@@ -32,8 +32,6 @@ This version uses **Pydantic** to validate both sides of the LLM call (the user'
 | `api.py` | FastAPI app exposing `POST /workout` |
 | `main.py` | `generate_workout_plan()` (typed parameters) → `create_workout_plan()`: builds the prompt, calls Groq, runs the checks, maps errors to friendly messages |
 | `schemas.py` | Pydantic models: `WorkoutPlan` (input), `WorkoutPlanResponse` / `WorkoutDay` / `Exercise` (output), and `strict_json_schema()` for Groq strict mode |
-| `compare_models.py` | Runs 6 test cases across models and response modes and writes a comparison report |
-| `report.md` | Prompt-design report: approach, test results, findings |
 
 ## What Pydantic does here
 
