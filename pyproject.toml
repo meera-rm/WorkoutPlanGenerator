@@ -1,0 +1,13 @@
+[project]
+name = "workout_plan_generator"
+version = "0.1.0"
+description = "Generates personal workout plan "
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard]>=0.136.3",
+    "groq>=1.2.0",
+    "pydantic>=2.14.3",
+    "python-dotenv>=1.2.4",
+    "streamlit>=1.67.0",
+]

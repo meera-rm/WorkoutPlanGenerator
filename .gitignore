@@ -1,0 +1,12 @@
+.env
+.env.*
+
+.venv/
+__pycache__/
+*.pyc
+*copy.py
+
+compare_models.py
+backups/
+cpydanticcopiesofworkpitgenerator/
+no_pydantic/
