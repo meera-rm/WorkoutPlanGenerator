@@ -132,34 +132,6 @@ In strict mode the model can only generate JSON that matches the schema (no miss
 
 Technical details are printed in the uvicorn terminal for debugging; users only see friendly messages.
 
-## Testing and model comparison
-
-```bash
-uv run python compare_models.py --token-limits 8192 none   # both models × both modes × both token settings
-uv run python compare_models.py --runs 3 --pause 15 --out results_run2.md   # longer pause avoids the free-tier rate limit
-```
-
-Writes `model_comparison_strict.md` with, for each model and mode: valid plans, disclaimer correctness, injury-safe exercise choices and average response time.
-
-**Results: every combination (6 tests × 2 runs each, best evidence from all runs):**
-
-| Model | Mode | Max tokens | Valid plans |
-|---|---|---|---|
-| gpt-oss-20b | json_object | none | 4/12 |
-| gpt-oss-20b | json_object | 8192 | **10/10** (+2 rate-limited) |
-| gpt-oss-20b | strict | none | 4/12 (twice) |
-| gpt-oss-20b | strict | 8192 | **11/11** (+1 rate-limited) |
-| gpt-oss-120b | json_object | none | 11/12 (twice) |
-| gpt-oss-120b | json_object | 8192 | **12/12** |
-| gpt-oss-120b | strict | none | 12/12 (twice) |
-| gpt-oss-120b | strict | 8192 | **12/12** |
-
-- **The token limit mattered most for gpt-oss-20b:** without it, the model often ran out of tokens mid-plan; with 8192 it was reliable in both modes.
-- **gpt-oss-120b was reliable in every configuration;** its only failure (JSON mode, no token limit) was a plan with fewer than 7 days, caught by Pydantic.
-- **Strict structured outputs + `max_completion_tokens=8192` gave 100% for both models.** That's the app's setup, with `gpt-oss-120b` as the default model.
-- On Groq's free tier, gpt-oss-20b hit the **daily token limit** partway through a 48-call run; requests refused for rate limits are not counted as model results.
-
-Details in `report.md` (sections 2, 7, 8 and 9) and the `results_*.md` files.
 
 ## Known limitations
 
